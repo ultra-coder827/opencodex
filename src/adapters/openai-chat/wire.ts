@@ -16,12 +16,21 @@ export function stripBracketedModelSuffix(modelId: string): string {
   return suffixStart === -1 ? modelId : modelId.slice(0, suffixStart);
 }
 
-export function openAIChatTransport(provider: OcxProviderConfig): {
+import {
+  isOpenCodeZenFreeRequest,
+  resolveOpenCodeFreeUrl,
+  applyOpenCodeFreeHeaders,
+  transformOpenCodeFreeChatBody,
+} from "../../providers/opencode-free-fingerprint";
+import { applyGithubCopilotContextTier } from "../../providers/github-copilot-context";
+
+export function openAIChatTransport(provider: OcxProviderConfig, modelId?: string): {
   url: string;
   headers: Record<string, string>;
   hasCredential: boolean;
 } {
-  const hasCredential = typeof provider.apiKey === "string" && provider.apiKey.trim().length > 0;
+  const isOpenCodeFree = isOpenCodeZenFreeRequest(provider, modelId);
+  const hasCredential = (typeof provider.apiKey === "string" && provider.apiKey.trim().length > 0) || isOpenCodeFree;
   if ((provider.authMode === "key" || provider.authMode === "oauth") && !provider.keyOptional && !hasCredential) {
     throw new Error(`${provider.adapter} requires a non-empty credential (authMode: ${provider.authMode})`);
   }
@@ -29,16 +38,35 @@ export function openAIChatTransport(provider: OcxProviderConfig): {
     "Content-Type": "application/json",
     ...agentRouterDefaultHeaders(provider.baseUrl, provider.headers),
   };
-  if (hasCredential) headers.Authorization = `Bearer ${provider.apiKey}`;
+  if (hasCredential && provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
   if (provider.headers) Object.assign(headers, provider.headers);
   // A configured relative path wins, mirroring how the Responses adapter honours
   // `responsesPath`. An upstream can serve both wires under different prefixes, and a
   // per-model wire override only swaps the adapter, so without this the opted-in Chat
   // request would be sent to the Responses base with `/chat/completions` appended.
-  const url = provider.chatCompletionsPath === undefined
+  let url = provider.chatCompletionsPath === undefined
     ? openaiChatCompletionsUrl(provider.baseUrl)
     : `${provider.baseUrl.replace(/\/$/, "")}${provider.chatCompletionsPath}`;
+
+  if (isOpenCodeFree) {
+    url = resolveOpenCodeFreeUrl(url);
+    Object.assign(headers, applyOpenCodeFreeHeaders(headers));
+  }
+
   return { url, headers, hasCredential };
+}
+
+export function applyOpenAIChatWireBodyModifiers(
+  body: Record<string, unknown>,
+  provider: OcxProviderConfig,
+  modelId: string,
+  providerName?: string,
+): unknown {
+  let modified = body;
+  if (isOpenCodeZenFreeRequest({ ...provider, providerName }, modelId)) {
+    modified = transformOpenCodeFreeChatBody(modified);
+  }
+  return applyGithubCopilotContextTier(modified, provider, modelId, providerName);
 }
 
 export function isNativeOpenAIChatTarget(provider: OcxProviderConfig): boolean {

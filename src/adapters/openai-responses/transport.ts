@@ -4,6 +4,11 @@ import { CODEX_RESPONSES_LITE_HEADER } from "../../codex/forward-transport-heade
 import { CODEX_FORWARD_BASE_URL, isCanonicalOpenAiForwardProvider } from "../../providers/openai-tiers-destination";
 import { normalizeForwardedClientHeaderName } from "../../lib/provider-client-headers";
 import { openaiResponsesUrl } from "../openai-responses-url";
+import {
+  isOpenCodeZenFreeRequest,
+  resolveOpenCodeFreeUrl,
+  applyOpenCodeFreeHeaders,
+} from "../../providers/opencode-free-fingerprint";
 
 // Caller credentials are forwarded only to the canonical Codex destination, never by capability.
 export const FORWARD_HEADERS = [
@@ -24,7 +29,7 @@ export function copyResponsesClientMetadata(target: Headers, incoming: Headers, 
 }
 
 /** Shared Responses URL/auth/header construction; capabilities never grant auth authority. */
-export function buildResponsesTransport(provider: OcxProviderConfig, incoming: Pick<IncomingMeta, "headers">): {
+export function buildResponsesTransport(provider: OcxProviderConfig, incoming: Pick<IncomingMeta, "headers">, modelId?: string): {
   url: string; headers: Record<string, string>;
 } {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -64,6 +69,10 @@ export function buildResponsesTransport(provider: OcxProviderConfig, incoming: P
       : `${provider.baseUrl.replace(/\/$/, "")}${provider.responsesPath}`;
     if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
     if (provider.headers) Object.assign(headers, provider.headers);
+  }
+  if (isOpenCodeZenFreeRequest(provider, modelId)) {
+    url = resolveOpenCodeFreeUrl(url);
+    Object.assign(headers, applyOpenCodeFreeHeaders(headers));
   }
   if (Array.isArray(provider.forwardClientHeaders)) {
     for (const rawName of provider.forwardClientHeaders.slice(0, 64)) {

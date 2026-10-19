@@ -1,5 +1,5 @@
 import { protectGlmSummaryBudget } from "./summary-budget";
-import { openAIChatTransport, stripBracketedModelSuffix } from "./wire";
+import { openAIChatTransport, stripBracketedModelSuffix, applyOpenAIChatWireBodyModifiers } from "./wire";
 import type { AdapterRequest } from "../base";
 import { frameAgentRouterMessages } from "../agentrouter";
 import { applyExplicitChatDeveloperRole } from "./developer-role";
@@ -59,7 +59,7 @@ export function buildOpenAIChatPassthroughRequest(
   providerName?: string,
   replayScope?: OcxReasoningReplayScopeRef,
 ): AdapterRequest {
-  const { url, headers, hasCredential } = openAIChatTransport(provider);
+  const { url, headers, hasCredential } = openAIChatTransport(provider, modelId);
 
   const body: Record<string, unknown> = {
     model: provider.modelSuffixBracketStrip ? stripBracketedModelSuffix(modelId) : modelId,
@@ -161,7 +161,7 @@ export function buildOpenAIChatPassthroughRequest(
     body.stream_options = rawBody.stream_options;
   }
 
-  const bodyJson = JSON.stringify(applyGithubCopilotContextTier(body, provider, modelId, providerName));
+  const bodyJson = JSON.stringify(applyOpenAIChatWireBodyModifiers(body, provider, modelId, providerName));
 
   if (isDebugEnabled()) {
     let host = "upstream";

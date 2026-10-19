@@ -9,6 +9,7 @@ import {
 import type { OcxUsage } from "../types";
 import { resolveStallTimeoutSec } from "../stall-timeout";
 import { createSseBlockBuffer, replaceSseDataPayload, sseDataPayload } from "./sse-payload-rewrite";
+import { restoreOpenCodeFreeToolName } from "../providers/opencode-free-fingerprint";
 
 type Rec = Record<string, unknown>;
 
@@ -86,13 +87,33 @@ export function structuredError(value: unknown): {
 }
 
 function normalizedChunk(value: Rec, requestedModel: string): Rec {
-  return {
+  const chunk: Rec = {
     ...value,
     id: typeof value.id === "string" ? value.id : `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
     object: "chat.completion.chunk",
     created: typeof value.created === "number" ? value.created : Math.floor(Date.now() / 1000),
     model: requestedModel,
   };
+  if (Array.isArray(chunk.choices)) {
+    chunk.choices = chunk.choices.map(c => {
+      if (!isRec(c)) return c;
+      const choice = { ...c };
+      if (isRec(choice.delta) && Array.isArray(choice.delta.tool_calls)) {
+        choice.delta = {
+          ...choice.delta,
+          tool_calls: choice.delta.tool_calls.map(tc => {
+            if (!isRec(tc) || !isRec(tc.function) || typeof tc.function.name !== "string") return tc;
+            return {
+              ...tc,
+              function: { ...tc.function, name: restoreOpenCodeFreeToolName(tc.function.name) },
+            };
+          }),
+        };
+      }
+      return choice;
+    });
+  }
+  return chunk;
 }
 
 export function jsonCompletionSse(value: Rec, requestedModel: string, budget?: TranslatorBudget): string {

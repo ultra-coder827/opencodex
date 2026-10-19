@@ -45,7 +45,7 @@ import {
 } from "./openai-chat/errors";
 import { messagesToChatFormat } from "./openai-chat/messages";
 import { withOpenAIChatToolNames } from "./openai-chat/tool-name-registry";
-import { openAIChatTransport, stripBracketedModelSuffix } from "./openai-chat/wire";
+import { openAIChatTransport, stripBracketedModelSuffix, applyOpenAIChatWireBodyModifiers } from "./openai-chat/wire";
 import { toolChoiceToChatFormat, toolsToChatFormatForProvider } from "./openai-chat/tool-schema";
 import { freeformToolsByWireName, type FreeformToolIdentity, reconcileSerializedToolCallEvents, reconcileStructuredToolCall, reconcileStructuredToolCalls, SerializedToolCallContentBuffer } from "./openai-chat/serialized-tool-call-content";
 
@@ -97,7 +97,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
 
     buildRequest(parsed: OcxParsedRequest, incoming?: IncomingMeta) {
       lastRequestedModelId = parsed.modelId;
-      const { url, headers, hasCredential } = openAIChatTransport(provider);
+      const { url, headers, hasCredential } = openAIChatTransport(provider, parsed.modelId);
       const messages = toolNames.messages(parsed, provider.baseUrl, messagesToChatFormat(parsed, provider));
       freeformTools = freeformToolsByWireName(parsed.context.tools, tool => toolNames.registry().alias(tool));
       const finish = (): AdapterRequest => {
@@ -230,7 +230,7 @@ export function createOpenAIChatAdapter(provider: OcxProviderConfig): ProviderAd
         }
         if (parsed.stream) body.stream_options = { include_usage: true };
 
-        const bodyJson = JSON.stringify(applyGithubCopilotContextTier(body, provider, parsed.modelId, incoming?.providerName));
+        const bodyJson = JSON.stringify(applyOpenAIChatWireBodyModifiers(body, provider, parsed.modelId, incoming?.providerName));
         const tierLog = createAdapterTierMetadata(
           parsed.options.tierObservation,
           parsed.options.tierDecision,

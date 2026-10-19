@@ -193,7 +193,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
 
     buildRequest(parsed: OcxParsedRequest, incoming: IncomingMeta) {
       const translatorBudget = incoming.translatorBudget;
-      const { url, headers } = buildResponsesTransport(provider, incoming);
+      const { url, headers } = buildResponsesTransport(provider, incoming, parsed.modelId);
 
       const forward = provider.authMode === "forward";
       let convertedRoutedCustomToolNames: Set<string> | undefined;

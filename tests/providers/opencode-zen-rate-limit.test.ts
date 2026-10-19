@@ -248,3 +248,200 @@ describe("Console Go transient upload refusal", () => {
     expect(isTransientConsoleGoUploadRejection({ status: 400, errorBody: envelope(GO_MESSAGE), ...GO_ROUTE })).toBe(true);
   });
 });
+
+import {
+  isOpenCodeZenFreeModel,
+  isOpenCodeZenFreeRequest,
+  generateOpenCodeSessionId,
+  getStableOpenCodeSessionId,
+  resolveOpenCodeFreeUrl,
+  applyOpenCodeFreeHeaders,
+  transformOpenCodeFreeChatBody,
+  restoreOpenCodeFreeToolName,
+  OPENCODE_REQUIRED_TOOLS_CHAT,
+} from "../../src/providers/opencode-free-fingerprint";
+import { openAIChatTransport } from "../../src/adapters/openai-chat/wire";
+import { createOpenAIChatAdapter } from "../../src/adapters/openai-chat";
+import { parseRequest } from "../../src/responses/parser";
+
+describe("OpenCode Zen Free-Tier Attestation & Transformation", () => {
+  test("identifies free models correctly", () => {
+    expect(isOpenCodeZenFreeModel("big-pickle")).toBe(true);
+    expect(isOpenCodeZenFreeModel("deepseek-v4-flash-free")).toBe(true);
+    expect(isOpenCodeZenFreeModel("mimo-v2.6-flash-free")).toBe(true);
+    expect(isOpenCodeZenFreeModel("muse-spark-1.2-contributor-free")).toBe(true);
+    expect(isOpenCodeZenFreeModel("opencode-zen/big-pickle")).toBe(true);
+    expect(isOpenCodeZenFreeModel("opencode-zen/deepseek-v4-flash-free")).toBe(true);
+
+    expect(isOpenCodeZenFreeModel("claude-sonnet-5-5")).toBe(false);
+    expect(isOpenCodeZenFreeModel("gpt-5-preview")).toBe(false);
+    expect(isOpenCodeZenFreeModel(undefined)).toBe(false);
+  });
+
+  test("identifies free requests for opencode-zen", () => {
+    const zenConfig = {
+      providerName: "opencode-zen",
+      baseUrl: "https://opencode.ai/zen/v1",
+      authMode: "key" as const,
+    };
+    expect(isOpenCodeZenFreeRequest(zenConfig, "deepseek-v4-flash-free")).toBe(true);
+    expect(isOpenCodeZenFreeRequest(zenConfig, "big-pickle")).toBe(true);
+    expect(isOpenCodeZenFreeRequest(zenConfig, "claude-sonnet-5-5")).toBe(false);
+
+    const otherProvider = {
+      providerName: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      authMode: "key" as const,
+    };
+    expect(isOpenCodeZenFreeRequest(otherProvider, "deepseek-v4-flash-free")).toBe(false);
+  });
+
+  test("generates valid OpenCode descending session IDs", () => {
+    const id = generateOpenCodeSessionId();
+    expect(id).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+    expect(id.length).toBe(30);
+
+    const stableId = getStableOpenCodeSessionId();
+    expect(stableId).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+    expect(getStableOpenCodeSessionId()).toBe(stableId);
+  });
+
+  test("resolves free model URLs to /inference/v1", () => {
+    expect(resolveOpenCodeFreeUrl("https://opencode.ai/zen/v1/chat/completions"))
+      .toBe("https://opencode.ai/inference/v1/chat/completions");
+    expect(resolveOpenCodeFreeUrl("https://opencode.ai/zen/v1/responses"))
+      .toBe("https://opencode.ai/inference/v1/responses");
+    expect(resolveOpenCodeFreeUrl("https://opencode.ai/zen/v1/messages"))
+      .toBe("https://opencode.ai/inference/v1/messages");
+    expect(resolveOpenCodeFreeUrl("https://api.openai.com/v1/chat/completions"))
+      .toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  test("applies OpenCode v2 client headers and removes x-opencode-request", () => {
+    const headers = applyOpenCodeFreeHeaders({
+      "Content-Type": "application/json",
+      "Authorization": "Bearer oc_sk_user_key",
+      "x-opencode-request": "req_12345",
+    });
+
+    expect(headers["Authorization"]).toBe("Bearer public");
+    expect(headers["User-Agent"]).toBe("opencode/latest/2.0.26/cli");
+    expect(headers["x-opencode-client"]).toBe("cli");
+    expect(headers["x-opencode-project"]).toBe("global");
+    expect(headers["x-opencode-session"]).toMatch(/^ses_/);
+    expect(headers["x-opencode-session-id"]).toBe(headers["x-opencode-session"]);
+    expect(headers["x-session-affinity"]).toBe(headers["x-opencode-session"]);
+    expect(headers["x-session-id"]).toBe(headers["x-opencode-session"]);
+    expect(headers["x-opencode-request"]).toBeUndefined();
+  });
+
+  test("openAIChatTransport automatically routes free models without requiring an API key", () => {
+    const zen = {
+      baseUrl: "https://opencode.ai/zen/v1",
+      adapter: "openai-chat",
+      authMode: "key" as const,
+      // No apiKey configured!
+    };
+
+    const transport = openAIChatTransport(zen, "deepseek-v4-flash-free");
+    expect(transport.url).toBe("https://opencode.ai/inference/v1/chat/completions");
+    expect(transport.headers["Authorization"]).toBe("Bearer public");
+    expect(transport.headers["User-Agent"]).toBe("opencode/latest/2.0.26/cli");
+    expect(transport.hasCredential).toBe(true);
+  });
+
+  test("transformOpenCodeFreeChatBody injects required tools and stream: true", () => {
+    const transformed = transformOpenCodeFreeChatBody({
+      model: "deepseek-v4-flash-free",
+      messages: [
+        { role: "system", content: "You are an assistant." },
+        { role: "user", content: "Hello" },
+      ],
+      stream: false,
+      tool_choice: "none",
+    });
+
+    expect(transformed.stream).toBe(true);
+    expect(transformed.tool_choice).toBe("auto");
+    expect(Array.isArray(transformed.tools)).toBe(true);
+    const tools = transformed.tools as any[];
+    expect(tools.length).toBe(OPENCODE_REQUIRED_TOOLS_CHAT.length);
+    expect(tools.some(t => t.function.name === "read")).toBe(true);
+    expect(tools.some(t => t.function.name === "bash")).toBe(true);
+    expect(tools.some(t => t.function.name === "glob")).toBe(true);
+    expect(tools.some(t => t.function.name === "grep")).toBe(true);
+    expect(tools.some(t => t.function.name === "shell")).toBe(true);
+
+    // Placeholder instruction was appended to system message
+    const msgs = transformed.messages as any[];
+    expect(msgs.length).toBe(2);
+    expect(msgs[0].role).toBe("system");
+    expect(msgs[0].content).toContain("placeholder");
+  });
+
+  test("transformOpenCodeFreeChatBody aliases client conflicting tools and restores them", () => {
+    const clientReadTool = {
+      type: "function",
+      function: {
+        name: "read",
+        description: "Client own read tool",
+        parameters: { type: "object", properties: { path: { type: "string" } } },
+      },
+    };
+
+    const transformed = transformOpenCodeFreeChatBody({
+      model: "deepseek-v4-flash-free",
+      messages: [
+        { role: "system", content: "You are an assistant." },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: '{"path":"a.ts"}' } }],
+        },
+      ],
+      tools: [clientReadTool],
+      stream: true,
+    });
+
+    const tools = transformed.tools as any[];
+    // Client tool renamed to read_client
+    expect(tools.some(t => t.function.name === "read_client")).toBe(true);
+    // Verbatim read tool still present
+    expect(tools.some(t => t.function.name === "read")).toBe(true);
+
+    // Assistant message tool_call renamed to read_client
+    const msgs = transformed.messages as any[];
+    expect(msgs[1].tool_calls[0].function.name).toBe("read_client");
+
+    // Restores read_client to read
+    expect(restoreOpenCodeFreeToolName("read_client")).toBe("read");
+    expect(restoreOpenCodeFreeToolName("shell_client")).toBe("shell");
+    expect(restoreOpenCodeFreeToolName("custom_tool")).toBe("custom_tool");
+  });
+
+  test("createOpenAIChatAdapter builds compliant OpenCode free request", () => {
+    const zen = {
+      baseUrl: "https://opencode.ai/zen/v1",
+      adapter: "openai-chat",
+      authMode: "key" as const,
+      keyOptional: true,
+    };
+    const adapter = createOpenAIChatAdapter(zen);
+    const parsed = parseRequest({
+      model: "opencode-zen/deepseek-v4-flash-free",
+      input: "Write hello world in python",
+      stream: true,
+    });
+
+    const request = adapter.buildRequest(parsed);
+    expect(request.url).toBe("https://opencode.ai/inference/v1/chat/completions");
+    expect(request.headers["Authorization"]).toBe("Bearer public");
+    expect(request.headers["User-Agent"]).toBe("opencode/latest/2.0.26/cli");
+
+    const body = JSON.parse(request.body as string);
+    expect(body.stream).toBe(true);
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.tools.some((t: any) => t.function.name === "read")).toBe(true);
+  });
+});
+

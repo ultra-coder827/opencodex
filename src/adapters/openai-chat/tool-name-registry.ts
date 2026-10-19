@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { namespacedToolName, type OcxParsedRequest, type OcxTool } from "../../types";
 import { frameAgentRouterMessages } from "../agentrouter";
+import { restoreOpenCodeFreeToolName } from "../../providers/opencode-free-fingerprint";
 
 const MAX_CHAT_TOOL_NAME_LENGTH = 64;
 const ALIAS_HINT_CHARS = 16;
@@ -115,7 +116,9 @@ export function createOpenAIChatToolNameRegistry(
       return aliasesByWireName.get(wireName) ?? wireName;
     },
     restore(wireName: string): string {
-      return originalsByAlias.get(wireName) ?? wireName;
+      const known = originalsByAlias.get(wireName);
+      if (known !== undefined) return known;
+      return restoreOpenCodeFreeToolName(wireName);
     },
   };
 }
