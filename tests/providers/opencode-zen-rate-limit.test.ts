@@ -367,7 +367,6 @@ describe("OpenCode Zen Free-Tier Attestation & Transformation", () => {
     const tools = transformed.tools as any[];
     expect(tools.length).toBe(OPENCODE_REQUIRED_TOOLS_CHAT.length);
     expect(tools.some(t => t.function.name === "read")).toBe(true);
-    expect(tools.some(t => t.function.name === "bash")).toBe(true);
     expect(tools.some(t => t.function.name === "glob")).toBe(true);
     expect(tools.some(t => t.function.name === "grep")).toBe(true);
     expect(tools.some(t => t.function.name === "shell")).toBe(true);

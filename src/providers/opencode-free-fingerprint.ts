@@ -132,10 +132,10 @@ export function applyOpenCodeFreeHeaders(
 ): Record<string, string> {
   const sesId = sessionId || getStableOpenCodeSessionId();
   const out = { ...headers };
+  delete out["authorization"];
+  delete out["user-agent"];
   out["Authorization"] = "Bearer public";
-  out["authorization"] = "Bearer public";
   out["User-Agent"] = "opencode/latest/2.0.26/cli";
-  out["user-agent"] = "opencode/latest/2.0.26/cli";
   out["x-opencode-client"] = "cli";
   out["x-opencode-project"] = "global";
   out["x-opencode-session"] = sesId;
@@ -162,21 +162,6 @@ export const OPENCODE_REQUIRED_TOOLS_CHAT = [
           limit: { type: "number", description: "The maximum number of lines to read. Defaults to 2000." },
         },
         required: ["filePath"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "bash",
-      description: "Execute a bash command in the terminal.",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "The command to execute." },
-        },
-        required: ["command"],
         additionalProperties: false,
       },
     },
